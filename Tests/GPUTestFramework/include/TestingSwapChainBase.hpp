@@ -308,6 +308,21 @@ public:
         return m_SwapChainDesc;
     }
 
+    virtual void DILIGENT_CALL_TYPE GetPresentTiming(SwapChainPresentTiming& Timing) const override final
+    {
+        Timing = {};
+    }
+
+    virtual Uint32 DILIGENT_CALL_TYPE GetDisplayEvents(SwapChainDisplayEvent* pEvents, Uint32 MaxEvents) override final
+    {
+        return 0;
+    }
+
+    virtual Bool DILIGENT_CALL_TYPE IsDisplayTimingSupported() const override final
+    {
+        return False;
+    }
+
     virtual void DumpBackBuffer(const char* FileName, bool KeepAlpha = false) override final
     {
         m_pContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);

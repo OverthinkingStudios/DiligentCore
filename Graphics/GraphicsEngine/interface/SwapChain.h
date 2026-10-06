@@ -41,6 +41,51 @@ DILIGENT_BEGIN_NAMESPACE(Diligent)
 static DILIGENT_CONSTEXPR INTERFACE_ID IID_SwapChain =
     {0x1c703b77, 0x6607, 0x4eec, {0xb1, 0xfe, 0x15, 0xc8, 0x2d, 0x3b, 0x41, 0x30}};
 
+/// Time spent in the parts of the most recent ISwapChain::Present() call, in nanoseconds.
+struct SwapChainPresentTiming
+{
+    /// 1-based index of the Present() call; 0 before the first call.
+    Uint64 PresentId DEFAULT_INITIALIZER(0);
+
+    /// DXGI frame-latency waitable object, or the Vulkan frame fence before the next acquire.
+    Uint64 FrameWaitNs DEFAULT_INITIALIZER(0);
+
+    /// vkAcquireNextImageKHR (Vulkan only).
+    Uint64 AcquireNs DEFAULT_INITIALIZER(0);
+
+    Uint64 QueuePresentNs DEFAULT_INITIALIZER(0);
+
+    /// The immediate context flush inside Present().
+    Uint64 SubmitNs DEFAULT_INITIALIZER(0);
+
+    Uint64 FinishFrameNs DEFAULT_INITIALIZER(0);
+
+    /// vkWaitForPresentKHR polls or DXGI frame statistics.
+    Uint64 DisplayPollNs DEFAULT_INITIALIZER(0);
+
+    Uint64 TotalNs DEFAULT_INITIALIZER(0);
+};
+typedef struct SwapChainPresentTiming SwapChainPresentTiming;
+
+
+/// A presented image reaching the display, in std::chrono::steady_clock nanoseconds.
+/// DXGI reports the vblank (Earliest == Latest); Vulkan brackets it between two polls.
+struct SwapChainDisplayEvent
+{
+    Uint64 PresentId DEFAULT_INITIALIZER(0);
+
+    Uint64 DisplayEarliestNs DEFAULT_INITIALIZER(0);
+    Uint64 DisplayLatestNs   DEFAULT_INITIALIZER(0);
+
+    /// DXGI only: vblank count the image was shown at.
+    Uint64 RefreshCount DEFAULT_INITIALIZER(0);
+
+    /// DXGI only: measured refresh period, 0 until known.
+    Uint64 RefreshPeriodNs DEFAULT_INITIALIZER(0);
+};
+typedef struct SwapChainDisplayEvent SwapChainDisplayEvent;
+
+
 #define DILIGENT_INTERFACE_NAME ISwapChain
 #include "../../../Primitives/interface/DefineInterfaceHelperMacros.h"
 
@@ -116,6 +161,18 @@ DILIGENT_BEGIN_INTERFACE(ISwapChain, IObject)
     /// The method does **NOT** increment the reference counter of the returned object,
     /// so Release() **must not** be called.
     VIRTUAL ITextureView* METHOD(GetDepthBufferDSV)(THIS) PURE;
+
+    /// Returns the timing of the most recent Present() call; all zeros if the backend does not measure it.
+    VIRTUAL void METHOD(GetPresentTiming)(THIS_
+                                          SwapChainPresentTiming REF Timing) CONST PURE;
+
+    /// Pops up to MaxEvents events, oldest first; they arrive frames after their Present(), latest 64 kept.
+    VIRTUAL Uint32 METHOD(GetDisplayEvents)(THIS_
+                                            SwapChainDisplayEvent* pEvents,
+                                            Uint32                 MaxEvents) PURE;
+
+    /// Returns true if this swap chain currently reports display events.
+    VIRTUAL Bool METHOD(IsDisplayTimingSupported)(THIS) CONST PURE;
 };
 DILIGENT_END_INTERFACE
 
@@ -133,6 +190,9 @@ DILIGENT_END_INTERFACE
 #    define ISwapChain_SetMaximumFrameLatency(This, ...) CALL_IFACE_METHOD(SwapChain, SetMaximumFrameLatency,  This, __VA_ARGS__)
 #    define ISwapChain_GetCurrentBackBufferRTV(This)     CALL_IFACE_METHOD(SwapChain, GetCurrentBackBufferRTV, This)
 #    define ISwapChain_GetDepthBufferDSV(This)           CALL_IFACE_METHOD(SwapChain, GetDepthBufferDSV,       This)
+#    define ISwapChain_GetPresentTiming(This, ...)       CALL_IFACE_METHOD(SwapChain, GetPresentTiming,        This, __VA_ARGS__)
+#    define ISwapChain_GetDisplayEvents(This, ...)       CALL_IFACE_METHOD(SwapChain, GetDisplayEvents,        This, __VA_ARGS__)
+#    define ISwapChain_IsDisplayTimingSupported(This)    CALL_IFACE_METHOD(SwapChain, IsDisplayTimingSupported, This)
 
 // clang-format on
 

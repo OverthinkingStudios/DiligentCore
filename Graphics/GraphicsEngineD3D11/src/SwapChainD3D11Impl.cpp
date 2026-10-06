@@ -128,6 +128,7 @@ void SwapChainD3D11Impl::Present(Uint32 SyncInterval)
     }
 
     DeviceContextD3D11Impl* pImmediateCtxD3D11 = pDeviceContext.RawPtr<DeviceContextD3D11Impl>();
+    const Uint64            PresentStartNs     = BeginPresentTiming();
 
     // A successful Present call for DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL SwapChains unbinds
     // backbuffer 0 from all GPU writeable bind points.
@@ -135,6 +136,7 @@ void SwapChainD3D11Impl::Present(Uint32 SyncInterval)
 
     if (m_SwapChainDesc.IsPrimary)
     {
+        const Uint64 FinishStartNs = PresentClockNs();
         pImmediateCtxD3D11->FinishFrame();
         // Clear the state caches to release all outstanding objects
         // that are only kept alive by references in the cache
@@ -143,6 +145,7 @@ void SwapChainD3D11Impl::Present(Uint32 SyncInterval)
         pImmediateCtxD3D11->ReleaseCommittedShaderResources();
         // ReleaseCommittedShaderResources() does not unbind vertex and index buffers
         // as this can explicitly be done by the user
+        m_PresentTiming.FinishFrameNs = PresentClockNs() - FinishStartNs;
     }
 
     // In contrast to MSDN sample, we wait for the frame as late as possible - right
@@ -151,6 +154,8 @@ void SwapChainD3D11Impl::Present(Uint32 SyncInterval)
     WaitForFrame();
 
     PresentInternal(SyncInterval);
+
+    EndPresentTiming(PresentStartNs);
 }
 
 void SwapChainD3D11Impl::UpdateSwapChain(bool CreateNew)

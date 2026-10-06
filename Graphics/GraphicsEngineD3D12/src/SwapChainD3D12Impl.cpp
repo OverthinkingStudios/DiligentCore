@@ -137,6 +137,7 @@ void SwapChainD3D12Impl::Present(Uint32 SyncInterval)
     }
 
     DeviceContextD3D12Impl* pImmediateCtxD3D12 = pDeviceContext.RawPtr<DeviceContextD3D12Impl>();
+    const Uint64            PresentStartNs     = BeginPresentTiming();
 
     CommandContext&   CmdCtx      = pImmediateCtxD3D12->GetCmdContext();
     TextureD3D12Impl* pBackBuffer = ClassPtrCast<TextureD3D12Impl>(GetCurrentBackBufferRTV()->GetTexture());
@@ -147,7 +148,11 @@ void SwapChainD3D12Impl::Present(Uint32 SyncInterval)
 
     CmdCtx.TransitionResource(*pBackBuffer, RESOURCE_STATE_PRESENT);
 
-    pImmediateCtxD3D12->Flush();
+    {
+        const Uint64 SubmitStartNs = PresentClockNs();
+        pImmediateCtxD3D12->Flush();
+        m_PresentTiming.SubmitNs = PresentClockNs() - SubmitStartNs;
+    }
 
     // In contrast to MSDN sample, we wait for the frame as late as possible - right
     // before presenting.
@@ -159,10 +164,14 @@ void SwapChainD3D12Impl::Present(Uint32 SyncInterval)
 
     if (m_SwapChainDesc.IsPrimary)
     {
+        const Uint64 FinishStartNs = PresentClockNs();
         pImmediateCtxD3D12->FinishFrame();
         RenderDeviceD3D12Impl* pDeviceD3D12 = ClassPtrCast<RenderDeviceD3D12Impl>(pImmediateCtxD3D12->GetDevice());
         pDeviceD3D12->ReleaseStaleResources();
+        m_PresentTiming.FinishFrameNs = PresentClockNs() - FinishStartNs;
     }
+
+    EndPresentTiming(PresentStartNs);
 
     // A successful Present call for DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL SwapChains unbinds
     // backbuffer 0 from all GPU writeable bind points.

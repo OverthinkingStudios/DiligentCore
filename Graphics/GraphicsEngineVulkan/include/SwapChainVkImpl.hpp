@@ -30,6 +30,8 @@
 /// \file
 /// Declaration of Diligent::SwapChainVkImpl class
 
+#include <deque>
+
 #include "EngineVkImplTraits.hpp"
 #include "SwapChainVk.h"
 #include "SwapChainBase.hpp"
@@ -83,6 +85,8 @@ public:
     /// Implementation of ISwapChain::GetDepthBufferDSV() in Vulkan backend.
     virtual ITextureViewVk* DILIGENT_CALL_TYPE GetDepthBufferDSV() override final { return m_pDepthBufferDSV; }
 
+    virtual Bool DILIGENT_CALL_TYPE IsDisplayTimingSupported() const override final { return m_PresentWaitSupported && m_PresentModeHasDisplayOrder; }
+
 private:
     void     CreateSurface();
     void     CreateVulkanSwapChain();
@@ -91,6 +95,10 @@ private:
     void     RecreateVulkanSwapchain(DeviceContextVkImpl* pImmediateCtxVk);
     void     ReleaseSwapChainResources(DeviceContextVkImpl* pImmediateCtxVk, bool DestroyVkSwapChain);
     void     ThrottleFrameSubmission();
+
+    // vkWaitForPresentKHR is externsync with present/acquire on the swap chain: zero-timeout
+    // polls on the presenting thread, never a waiter thread.
+    void PollPresentWait();
 
     const NativeWindow m_Window;
 
@@ -128,6 +136,17 @@ private:
     bool     m_VSyncEnabled    = true;
     bool     m_ImageAcquired   = false;
     Uint32   m_FrameIndex      = 1;
+
+    struct PendingPresent
+    {
+        Uint64 Id          = 0;
+        Uint64 NotBeforeNs = 0;
+    };
+    std::deque<PendingPresent> m_PendingPresents;
+
+    bool   m_PresentWaitSupported       = false;
+    bool   m_PresentModeHasDisplayOrder = false;
+    Uint32 m_SlowPresentWaitPolls       = 0;
 };
 
 } // namespace Diligent

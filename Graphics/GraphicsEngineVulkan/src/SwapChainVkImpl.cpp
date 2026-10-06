@@ -51,6 +51,9 @@ SwapChainVkImpl::SwapChainVkImpl(IReferenceCounters*  pRefCounters,
     m_SwapChainImagesInitialized (STD_ALLOCATOR_RAW_MEM(bool, GetRawAllocator(), "Allocator for vector<bool>"))
 // clang-format on
 {
+    const auto& ExtFeats   = pRenderDeviceVk->GetLogicalDevice().GetEnabledExtFeatures();
+    m_PresentWaitSupported = ExtFeats.PresentId.presentId != VK_FALSE && ExtFeats.PresentWait.presentWait != VK_FALSE;
+
     CreateSurface();
     CreateVulkanSwapChain();
     InitBuffersAndViews();
@@ -435,6 +438,9 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
     swapchain_ci.clipped            = VK_TRUE;
     swapchain_ci.imageColorSpace    = ColorSpace;
 
+    // MAILBOX/IMMEDIATE complete replaced images too, so present_wait would not give display times.
+    m_PresentModeHasDisplayOrder = PresentMode == VK_PRESENT_MODE_FIFO_KHR || PresentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+
     DEV_CHECK_ERR(m_SwapChainDesc.Usage != 0, "No swap chain usage flags defined");
     static_assert(SWAP_CHAIN_USAGE_LAST == 8, "Please update this function to handle the new swapchain usage");
     if (m_SwapChainDesc.Usage & SWAP_CHAIN_USAGE_RENDER_TARGET)
@@ -603,7 +609,57 @@ void SwapChainVkImpl::ThrottleFrameSubmission()
 {
     if (m_FrameIndex > m_SwapChainDesc.BufferCount)
     {
+        const Uint64 StartNs = PresentClockNs();
         m_FrameCompleteFence->Wait(m_FrameIndex - m_SwapChainDesc.BufferCount);
+        m_PresentTiming.FrameWaitNs += PresentClockNs() - StartNs;
+    }
+}
+
+void SwapChainVkImpl::PollPresentWait()
+{
+    const VkDevice vkDevice = m_pRenderDevice.RawPtr<RenderDeviceVkImpl>()->GetVkDevice();
+    while (!m_PendingPresents.empty())
+    {
+        PendingPresent& Pending = m_PendingPresents.front();
+
+        // The driver checks at some instant within [BeforeNs, AfterNs].
+        const Uint64   BeforeNs = PresentClockNs();
+        const VkResult res      = vkWaitForPresentKHR(vkDevice, m_VkSwapChain, Pending.Id, 0);
+        const Uint64   AfterNs  = PresentClockNs();
+        m_PresentTiming.DisplayPollNs += AfterNs - BeforeNs;
+
+        // NVIDIA 581 blocks until the vblank despite the zero timeout, but only on the first poll of a frame:
+        // the strikes must be cumulative, not consecutive, or the later fast polls reset them.
+        if (AfterNs - BeforeNs > 2000000 && ++m_SlowPresentWaitPolls >= 3)
+        {
+            LOG_WARNING_MESSAGE("vkWaitForPresentKHR blocked for ", (AfterNs - BeforeNs) / 1000000.0,
+                                " ms with a zero timeout: display timing is disabled for this swap chain");
+            m_PresentWaitSupported = false;
+            m_PendingPresents.clear();
+            return;
+        }
+
+        if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR)
+        {
+            SwapChainDisplayEvent Event;
+            Event.PresentId         = Pending.Id;
+            Event.DisplayEarliestNs = Pending.NotBeforeNs;
+            Event.DisplayLatestNs   = AfterNs;
+            PushDisplayEvent(Event);
+            m_PendingPresents.pop_front();
+        }
+        else if (res == VK_TIMEOUT)
+        {
+            // Presents complete in order, so none of the later ones is displayed either.
+            for (PendingPresent& Later : m_PendingPresents)
+                Later.NotBeforeNs = BeforeNs;
+            break;
+        }
+        else
+        {
+            m_PendingPresents.clear();
+            break;
+        }
     }
 }
 
@@ -623,10 +679,14 @@ VkResult SwapChainVkImpl::AcquireNextImage(DeviceContextVkImpl* pDeviceCtxVk)
     // for the frame (FrameIndex - BufferCount) to complete.
     // This also ensures that there are no more than BufferCount frames in flight at any time.
     ThrottleFrameSubmission();
+    PollPresentWait();
 
     RefCntAutoPtr<ManagedSemaphore>& ImageAcquiredSemaphore = m_ImageAcquiredSemaphores[m_SemaphoreIndex];
 
-    VkResult res    = vkAcquireNextImageKHR(LogicalDevice.GetVkDevice(), m_VkSwapChain, UINT64_MAX, ImageAcquiredSemaphore->Get(), VK_NULL_HANDLE, &m_BackBufferIndex);
+    const Uint64 AcquireStartNs = PresentClockNs();
+    VkResult     res            = vkAcquireNextImageKHR(LogicalDevice.GetVkDevice(), m_VkSwapChain, UINT64_MAX, ImageAcquiredSemaphore->Get(), VK_NULL_HANDLE, &m_BackBufferIndex);
+    m_PresentTiming.AcquireNs += PresentClockNs() - AcquireStartNs;
+    PollPresentWait();
     m_ImageAcquired = (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR);
 #if PLATFORM_APPLE
     if (res == VK_SUBOPTIMAL_KHR)
@@ -673,6 +733,9 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
     DeviceContextVkImpl* pImmediateCtxVk = pDeviceContext.RawPtr<DeviceContextVkImpl>();
     RenderDeviceVkImpl*  pDeviceVk       = m_pRenderDevice.RawPtr<RenderDeviceVkImpl>();
 
+    const Uint64 PresentStartNs = BeginPresentTiming();
+    PollPresentWait();
+
     ITexture* pBackBuffer = GetCurrentBackBufferRTV()->GetTexture();
     pImmediateCtxVk->UnbindTextureFromFramebuffer(ClassPtrCast<TextureVkImpl>(pBackBuffer), false);
 
@@ -690,7 +753,11 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
     }
 
     pImmediateCtxVk->EnqueueSignal(m_FrameCompleteFence, m_FrameIndex++);
-    pImmediateCtxVk->Flush();
+    {
+        const Uint64 SubmitStartNs = PresentClockNs();
+        pImmediateCtxVk->Flush();
+        m_PresentTiming.SubmitNs = PresentClockNs() - SubmitStartNs;
+    }
 
     if (!m_IsMinimized)
     {
@@ -709,6 +776,19 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
             PresentInfo.pSwapchains     = &m_VkSwapChain;
             PresentInfo.pImageIndices   = &m_BackBufferIndex;
             PresentInfo.pResults        = &Result;
+
+            const bool     TrackPresent = IsDisplayTimingSupported();
+            const uint64_t PresentId    = m_PresentTiming.PresentId;
+            VkPresentIdKHR PresentIdInfo{};
+            if (TrackPresent)
+            {
+                PresentIdInfo.sType          = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+                PresentIdInfo.swapchainCount = 1;
+                PresentIdInfo.pPresentIds    = &PresentId;
+                PresentInfo.pNext            = &PresentIdInfo;
+            }
+
+            const Uint64 QueuePresentStartNs = PresentClockNs();
             pDeviceVk->LockCmdQueueAndRun(
                 pImmediateCtxVk->GetCommandQueueId(),
                 [&PresentInfo](ICommandQueueVk* pCmdQueueVk) //
@@ -716,6 +796,15 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
                     pCmdQueueVk->Present(PresentInfo);
                 } //
             );
+            m_PresentTiming.QueuePresentNs = PresentClockNs() - QueuePresentStartNs;
+
+            if (TrackPresent && (Result == VK_SUCCESS || Result == VK_SUBOPTIMAL_KHR))
+            {
+                // Bounded in case a driver never completes some presents.
+                if (m_PendingPresents.size() >= 16)
+                    m_PendingPresents.pop_front();
+                m_PendingPresents.push_back({PresentId, QueuePresentStartNs});
+            }
         }
 
         if (Result == VK_SUBOPTIMAL_KHR || Result == VK_ERROR_OUT_OF_DATE_KHR)
@@ -731,8 +820,10 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
 
     if (m_SwapChainDesc.IsPrimary)
     {
+        const Uint64 FinishStartNs = PresentClockNs();
         pImmediateCtxVk->FinishFrame();
         pDeviceVk->ReleaseStaleResources();
+        m_PresentTiming.FinishFrameNs = PresentClockNs() - FinishStartNs;
     }
 
     if (!m_IsMinimized)
@@ -771,12 +862,17 @@ void SwapChainVkImpl::Present(Uint32 SyncInterval)
         // https://github.com/DiligentGraphics/DiligentSamples/issues/234
         ThrottleFrameSubmission();
     }
+
+    EndPresentTiming(PresentStartNs);
 }
 
 void SwapChainVkImpl::ReleaseSwapChainResources(DeviceContextVkImpl* pImmediateCtxVk, bool DestroyVkSwapChain)
 {
     if (m_VkSwapChain == VK_NULL_HANDLE)
         return;
+
+    // Present ids cannot be waited on through the next VkSwapchainKHR.
+    m_PendingPresents.clear();
 
     if (pImmediateCtxVk != nullptr)
     {

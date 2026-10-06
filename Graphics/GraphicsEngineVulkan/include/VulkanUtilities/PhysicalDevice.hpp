@@ -71,6 +71,8 @@ public:
         VkPhysicalDeviceHostImageCopyFeaturesEXT             HostImageCopy             = {};
         VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR FragmentShaderBarycentric = {};
         VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR  ComputeShaderDerivatives  = {};
+        VkPhysicalDevicePresentIdFeaturesKHR                 PresentId                 = {};
+        VkPhysicalDevicePresentWaitFeaturesKHR               PresentWait               = {};
 
 
         bool Spirv14              = false; // Ray tracing requires Vulkan 1.2 or SPIRV 1.4 extension

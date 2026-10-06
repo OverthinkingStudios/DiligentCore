@@ -285,6 +285,9 @@ protected:
             m_FrameLatencyWaitableObject = NULL;
             SetDXGIDeviceMaximumFrameLatency();
         }
+
+        // A new DXGI swap chain counts its presents from zero.
+        m_FrameStats = {};
     }
 
     void WaitForFrame()
@@ -292,9 +295,12 @@ protected:
         // https://docs.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains#step-4-wait-before-rendering-each-frame
         if (m_FrameLatencyWaitableObject != NULL)
         {
+            const Uint64 StartNs = this->PresentClockNs();
+
             DWORD Res = WaitForSingleObjectEx(m_FrameLatencyWaitableObject,
                                               500, // 0.5 second timeout (shouldn't ever occur)
                                               true);
+            this->m_PresentTiming.FrameWaitNs += this->PresentClockNs() - StartNs;
             if (Res != WAIT_OBJECT_0)
             {
                 const char* ErrorMsg = Res == WAIT_TIMEOUT ?
@@ -381,8 +387,117 @@ protected:
         if (SyncInterval == 0 && !m_FSDesc.Fullscreen && m_TearingSupported)
             Flags |= DXGI_PRESENT_ALLOW_TEARING;
 
-        return m_pSwapChain->Present(SyncInterval, Flags);
+        const Uint64  StartNs                = this->PresentClockNs();
+        const HRESULT hr                     = m_pSwapChain->Present(SyncInterval, Flags);
+        const Uint64  EndNs                  = this->PresentClockNs();
+        this->m_PresentTiming.QueuePresentNs = EndNs - StartNs;
+
+        if (SUCCEEDED(hr))
+        {
+            QueryFrameStatistics();
+            this->m_PresentTiming.DisplayPollNs += this->PresentClockNs() - EndNs;
+        }
+        return hr;
     }
+
+public:
+    virtual Bool DILIGENT_CALL_TYPE IsDisplayTimingSupported() const override
+    {
+        return m_FrameStats.Seen;
+    }
+
+private:
+    // MSVC steady_clock's split, so the result is on its timeline exactly.
+    static Uint64 QpcToNs(LONGLONG Qpc)
+    {
+        static const LONGLONG Freq = [] {
+            LARGE_INTEGER f;
+            QueryPerformanceFrequency(&f);
+            return f.QuadPart;
+        }();
+        return static_cast<Uint64>((Qpc / Freq) * 1000000000LL + (Qpc % Freq) * 1000000000LL / Freq);
+    }
+
+    // Only the latest displayed present is reported: a frame replaced between two Present() calls gets no event.
+    void QueryFrameStatistics()
+    {
+        FrameStatsState& St = m_FrameStats;
+
+        // A Present() that DXGI did not count must not overwrite the previous mapping.
+        UINT LastPresentCount = 0;
+        if (SUCCEEDED(m_pSwapChain->GetLastPresentCount(&LastPresentCount)) && LastPresentCount != St.LastMappedCount)
+        {
+            St.IdOfCount[LastPresentCount % St.IdOfCount.size()] = {LastPresentCount, this->m_PresentTiming.PresentId};
+            St.LastMappedCount                                   = LastPresentCount;
+        }
+
+        DXGI_FRAME_STATISTICS Stats{};
+        const HRESULT         hr = m_pSwapChain->GetFrameStatistics(&Stats);
+        if (FAILED(hr))
+        {
+            if (hr == DXGI_ERROR_FRAME_STATISTICS_DISJOINT)
+            {
+                St.BaseRefresh     = 0;
+                St.RefreshPeriodNs = 0;
+            }
+            return;
+        }
+        St.Seen = true;
+
+        // >= 32 refreshes, so one late vblank sample barely moves the period.
+        const LONGLONG SyncQpc = Stats.SyncQPCTime.QuadPart;
+        if (St.BaseRefresh == 0 || Stats.SyncRefreshCount < St.BaseRefresh)
+        {
+            St.BaseRefresh = Stats.SyncRefreshCount;
+            St.BaseQpc     = SyncQpc;
+        }
+        else if (Stats.SyncRefreshCount - St.BaseRefresh >= 32)
+        {
+            St.RefreshPeriodNs = (QpcToNs(SyncQpc) - QpcToNs(St.BaseQpc)) / (Stats.SyncRefreshCount - St.BaseRefresh);
+            St.BaseRefresh     = Stats.SyncRefreshCount;
+            St.BaseQpc         = SyncQpc;
+        }
+
+        if (Stats.PresentCount == 0 || Stats.PresentCount == St.LastReportedCount)
+            return;
+        const auto& Entry = St.IdOfCount[Stats.PresentCount % St.IdOfCount.size()];
+        if (Entry.Count != Stats.PresentCount)
+            return;
+        if (Stats.SyncRefreshCount < Stats.PresentRefreshCount)
+            return;
+        const UINT Behind = Stats.SyncRefreshCount - Stats.PresentRefreshCount;
+        if (Behind > 0 && St.RefreshPeriodNs == 0)
+            return;
+
+        const Uint64 DisplayNs = QpcToNs(SyncQpc) - Behind * St.RefreshPeriodNs;
+
+        SwapChainDisplayEvent Event;
+        Event.PresentId         = Entry.PresentId;
+        Event.DisplayEarliestNs = DisplayNs;
+        Event.DisplayLatestNs   = DisplayNs;
+        Event.RefreshCount      = Stats.PresentRefreshCount;
+        Event.RefreshPeriodNs   = St.RefreshPeriodNs;
+        this->PushDisplayEvent(Event);
+        St.LastReportedCount = Stats.PresentCount;
+    }
+
+    struct FrameStatsState
+    {
+        struct CountToId
+        {
+            UINT   Count     = 0;
+            Uint64 PresentId = 0;
+        };
+        std::array<CountToId, 16> IdOfCount{};
+
+        UINT     LastMappedCount   = 0;
+        UINT     LastReportedCount = 0;
+        UINT     BaseRefresh       = 0;
+        LONGLONG BaseQpc           = 0;
+        Uint64   RefreshPeriodNs   = 0;
+        bool     Seen              = false;
+    };
+    FrameStatsState m_FrameStats;
 
 protected:
     using TBase::m_pRenderDevice;

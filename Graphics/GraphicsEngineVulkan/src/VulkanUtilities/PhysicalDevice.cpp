@@ -359,6 +359,19 @@ PhysicalDevice::PhysicalDevice(const CreateInfo& CI) :
             m_ExtFeatures.ComputeShaderDerivatives.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
         }
 
+        if (IsExtensionSupported(VK_KHR_PRESENT_ID_EXTENSION_NAME) && IsExtensionSupported(VK_KHR_PRESENT_WAIT_EXTENSION_NAME))
+        {
+            *NextFeat = &m_ExtFeatures.PresentId;
+            NextFeat  = &m_ExtFeatures.PresentId.pNext;
+
+            m_ExtFeatures.PresentId.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
+
+            *NextFeat = &m_ExtFeatures.PresentWait;
+            NextFeat  = &m_ExtFeatures.PresentWait.pNext;
+
+            m_ExtFeatures.PresentWait.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR;
+        }
+
         const bool HostImageCopySupported = IsExtensionSupported(VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME);
         if (HostImageCopySupported)
         {

@@ -1299,6 +1299,24 @@ void EngineFactoryVkImpl::CreateDeviceAndContextsVk(const EngineVkCreateInfo& En
                 NextExt  = &EnabledExtFeats.HostImageCopy.pNext;
             }
 
+            // Swap chain display timing; not tied to a DeviceFeature.
+            if (Instance->IsExtensionEnabled(VK_KHR_SURFACE_EXTENSION_NAME) &&
+                DeviceExtFeatures.PresentId.presentId != VK_FALSE &&
+                DeviceExtFeatures.PresentWait.presentWait != VK_FALSE)
+            {
+                DeviceExtensions.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+                DeviceExtensions.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+
+                EnabledExtFeats.PresentId   = DeviceExtFeatures.PresentId;
+                EnabledExtFeats.PresentWait = DeviceExtFeatures.PresentWait;
+
+                *NextExt = &EnabledExtFeats.PresentId;
+                NextExt  = &EnabledExtFeats.PresentId.pNext;
+
+                *NextExt = &EnabledExtFeats.PresentWait;
+                NextExt  = &EnabledExtFeats.PresentWait.pNext;
+            }
+
             // Append user-defined features
             *NextExt = EngineCI.pDeviceExtensionFeatures;
         }

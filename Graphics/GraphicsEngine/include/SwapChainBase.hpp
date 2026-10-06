@@ -30,6 +30,9 @@
 /// \file
 /// Implementation of the Diligent::SwapChainBase template class
 
+#include <array>
+#include <chrono>
+
 #include "RenderDevice.h"
 #include "DeviceContext.h"
 #include "SwapChain.h"
@@ -95,7 +98,56 @@ public:
     virtual void DILIGENT_CALL_TYPE SetMaximumFrameLatency(Uint32 MaxLatency) override
     {}
 
+    virtual void DILIGENT_CALL_TYPE GetPresentTiming(SwapChainPresentTiming& Timing) const override final
+    {
+        Timing = m_PresentTiming;
+    }
+
+    virtual Uint32 DILIGENT_CALL_TYPE GetDisplayEvents(SwapChainDisplayEvent* pEvents, Uint32 MaxEvents) override final
+    {
+        Uint32 Count = 0;
+        while (Count < MaxEvents && m_DisplayEventsRead != m_DisplayEventsWritten)
+            pEvents[Count++] = m_DisplayEvents[m_DisplayEventsRead++ % m_DisplayEvents.size()];
+        return Count;
+    }
+
+    virtual Bool DILIGENT_CALL_TYPE IsDisplayTimingSupported() const override
+    {
+        return False;
+    }
+
 protected:
+    static Uint64 PresentClockNs()
+    {
+        return static_cast<Uint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    Uint64 BeginPresentTiming()
+    {
+        const Uint64 PresentId    = m_PresentTiming.PresentId + 1;
+        m_PresentTiming           = {};
+        m_PresentTiming.PresentId = PresentId;
+        return PresentClockNs();
+    }
+
+    void EndPresentTiming(Uint64 StartNs)
+    {
+        m_PresentTiming.TotalNs = PresentClockNs() - StartNs;
+    }
+
+    void PushDisplayEvent(const SwapChainDisplayEvent& Event)
+    {
+        if (m_DisplayEventsWritten - m_DisplayEventsRead == m_DisplayEvents.size())
+            ++m_DisplayEventsRead;
+        m_DisplayEvents[m_DisplayEventsWritten++ % m_DisplayEvents.size()] = Event;
+    }
+
+    SwapChainPresentTiming m_PresentTiming;
+
+    std::array<SwapChainDisplayEvent, 64> m_DisplayEvents{};
+    Uint64                                m_DisplayEventsRead    = 0;
+    Uint64                                m_DisplayEventsWritten = 0;
+
     bool Resize(Uint32 NewWidth, Uint32 NewHeight, SURFACE_TRANSFORM NewPreTransform, Int32 Dummy = 0 /*To be different from virtual function*/)
     {
         if (NewWidth != 0 && NewHeight != 0 &&
