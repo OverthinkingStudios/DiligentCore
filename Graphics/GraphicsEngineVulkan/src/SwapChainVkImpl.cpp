@@ -345,9 +345,13 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
         }
         else
         {
-            // Mailbox is the lowest latency non-tearing presentation mode.
-            PreferredPresentModes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
+            // EWFX: IMMEDIATE first. vsync off has to mean uncapped presentation (D3D12-vs-Vulkan profiling):
+            // IMMEDIATE is the Vulkan twin of DXGI Present(0, ALLOW_TEARING). MAILBOX only uncaps rendering;
+            // the screen still gets one image per refresh, and a driver that holds the replaced images until
+            // the next vblank (e.g. MAILBOX layered on a DXGI flip chain) throttles rendering to the refresh
+            // too. MAILBOX stays as the fallback: GNOME Wayland offers no IMMEDIATE.
             PreferredPresentModes.push_back(VK_PRESENT_MODE_IMMEDIATE_KHR);
+            PreferredPresentModes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
             PreferredPresentModes.push_back(VK_PRESENT_MODE_FIFO_KHR);
         }
 
@@ -360,21 +364,30 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
             }
         }
 
-        const char* PresentModeName = nullptr;
+        const auto GetPresentModeName = [](VkPresentModeKHR Mode) -> const char* {
 #define PRESENT_MODE_CASE(Mode) \
-    case Mode: PresentModeName = #Mode; break;
-        switch (PresentMode)
-        {
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_IMMEDIATE_KHR)
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_MAILBOX_KHR)
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_KHR)
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_RELAXED_KHR)
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR)
-            PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)
-            default: PresentModeName = "<UNKNOWN>";
-        }
+    case Mode: return #Mode;
+            switch (Mode)
+            {
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_IMMEDIATE_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_MAILBOX_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)
+                default: return "<UNKNOWN>";
+            }
 #undef PRESENT_MODE_CASE
-        LOG_INFO_MESSAGE("Using ", PresentModeName, " swap chain present mode");
+        };
+        // EWFX: the vsync state and what the surface offers, so a capped vsync-off run is diagnosable from the log.
+        std::string OfferedModes;
+        for (VkPresentModeKHR Mode : presentModes)
+        {
+            OfferedModes += OfferedModes.empty() ? "" : " ";
+            OfferedModes += GetPresentModeName(Mode);
+        }
+        LOG_INFO_MESSAGE("Using ", GetPresentModeName(PresentMode), " swap chain present mode (vsync ", (m_VSyncEnabled ? "on" : "off"),
+                         "; surface offers ", OfferedModes, ")");
     }
 
     // Determine the number of VkImage's to use in the swap chain.

@@ -288,6 +288,13 @@ protected:
 
         // A new DXGI swap chain counts its presents from zero.
         m_FrameStats = {};
+
+        // One line to check at a glance whether sync-interval-0 presents can tear (= be uncapped).
+        LOG_INFO_MESSAGE("DXGI swap chain: ", swapChainDesc.BufferCount, " buffers, FLIP_SEQUENTIAL, ",
+                         m_FSDesc.Fullscreen ? "exclusive fullscreen" : "windowed/borderless",
+                         ", ALLOW_TEARING ", m_TearingSupported ? "supported" : "NOT supported",
+                         ", max frame latency ", m_MaxFrameLatency, m_FrameLatencyWaitableObject != NULL ? " (waitable)" : "");
+        m_LoggedSyncInterval = ~0u;
     }
 
     void WaitForFrame()
@@ -386,6 +393,17 @@ protected:
         // DXGI_PRESENT_ALLOW_TEARING can only be used with sync interval 0
         if (SyncInterval == 0 && !m_FSDesc.Fullscreen && m_TearingSupported)
             Flags |= DXGI_PRESENT_ALLOW_TEARING;
+
+        if (SyncInterval != m_LoggedSyncInterval)
+        {
+            // Logged on every vsync toggle so a capped vsync-off run can be told apart from a missing tearing flag.
+            m_LoggedSyncInterval = SyncInterval;
+            LOG_INFO_MESSAGE("DXGI Present: SyncInterval ", SyncInterval, (Flags & DXGI_PRESENT_ALLOW_TEARING) ? ", ALLOW_TEARING" : ", no tearing flag",
+                             SyncInterval != 0     ? " (vsync)" :
+                                 m_FSDesc.Fullscreen ? " (exclusive fullscreen: tears without the flag)" :
+                                 !m_TearingSupported ? " (tearing unsupported: DWM may cap at the refresh rate)" :
+                                                       "");
+        }
 
         const Uint64  StartNs                = this->PresentClockNs();
         const HRESULT hr                     = m_pSwapChain->Present(SyncInterval, Flags);
@@ -512,6 +530,7 @@ protected:
 
     Uint32 m_MaxFrameLatency  = 0;
     bool   m_TearingSupported = false;
+    Uint32 m_LoggedSyncInterval = ~0u;
 };
 
 } // namespace Diligent
