@@ -116,6 +116,11 @@ public:
         return False;
     }
 
+    virtual Bool DILIGENT_CALL_TYPE IsPresentBlocked(Uint64 /*TimeoutNs*/) override
+    {
+        return False;
+    }
+
 protected:
     static Uint64 PresentClockNs()
     {

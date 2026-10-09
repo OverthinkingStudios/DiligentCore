@@ -323,6 +323,11 @@ public:
         return False;
     }
 
+    virtual Bool DILIGENT_CALL_TYPE IsPresentBlocked(Uint64 TimeoutNs) override final
+    {
+        return False;
+    }
+
     virtual void DumpBackBuffer(const char* FileName, bool KeepAlpha = false) override final
     {
         m_pContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);

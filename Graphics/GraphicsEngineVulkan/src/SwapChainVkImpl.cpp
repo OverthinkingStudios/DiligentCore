@@ -375,6 +375,7 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
                 PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_RELAXED_KHR)
                 PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR)
                 PRESENT_MODE_CASE(VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)
+                PRESENT_MODE_CASE(VK_PRESENT_MODE_FIFO_LATEST_READY_EXT)
                 default: return "<UNKNOWN>";
             }
 #undef PRESENT_MODE_CASE
@@ -674,6 +675,24 @@ void SwapChainVkImpl::PollPresentWait()
             break;
         }
     }
+}
+
+Bool SwapChainVkImpl::IsPresentBlocked(Uint64 TimeoutNs)
+{
+    PollPresentWait();
+    if (!IsDisplayTimingSupported() || m_PendingPresents.empty())
+        return False;
+    // One image is on screen and one is ours: after the next present, the acquire finds a free
+    // image only if fewer than BufferCount - 2 presents are still waiting for the display.
+    if (m_PendingPresents.size() + 2 < m_SwapChainDesc.BufferCount)
+        return False;
+    // A Wayland compositor that does not repaint (hidden or blanked output) never releases the
+    // queued images, and vkAcquireNextImageKHR would wait with them indefinitely.
+    const VkDevice vkDevice = m_pRenderDevice.RawPtr<RenderDeviceVkImpl>()->GetVkDevice();
+    if (vkWaitForPresentKHR(vkDevice, m_VkSwapChain, m_PendingPresents.front().Id, TimeoutNs) == VK_TIMEOUT)
+        return True;
+    PollPresentWait();
+    return False;
 }
 
 VkResult SwapChainVkImpl::AcquireNextImage(DeviceContextVkImpl* pDeviceCtxVk)

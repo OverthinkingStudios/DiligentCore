@@ -87,6 +87,8 @@ public:
 
     virtual Bool DILIGENT_CALL_TYPE IsDisplayTimingSupported() const override final { return m_PresentWaitSupported && m_PresentModeHasDisplayOrder; }
 
+    virtual Bool DILIGENT_CALL_TYPE IsPresentBlocked(Uint64 TimeoutNs) override final;
+
 private:
     void     CreateSurface();
     void     CreateVulkanSwapChain();

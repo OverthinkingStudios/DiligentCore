@@ -173,6 +173,12 @@ DILIGENT_BEGIN_INTERFACE(ISwapChain, IObject)
 
     /// Returns true if this swap chain currently reports display events.
     VIRTUAL Bool METHOD(IsDisplayTimingSupported)(THIS) CONST PURE;
+
+    /// Returns true if the next Present() would wait for the compositor to show an earlier image
+    /// (no free image left) and that image is not shown within TimeoutNs. Lets an application skip
+    /// presenting to a window the compositor has stopped showing. False if it cannot tell (no display timing).
+    VIRTUAL Bool METHOD(IsPresentBlocked)(THIS_
+                                          Uint64 TimeoutNs) PURE;
 };
 DILIGENT_END_INTERFACE
 
@@ -193,6 +199,7 @@ DILIGENT_END_INTERFACE
 #    define ISwapChain_GetPresentTiming(This, ...)       CALL_IFACE_METHOD(SwapChain, GetPresentTiming,        This, __VA_ARGS__)
 #    define ISwapChain_GetDisplayEvents(This, ...)       CALL_IFACE_METHOD(SwapChain, GetDisplayEvents,        This, __VA_ARGS__)
 #    define ISwapChain_IsDisplayTimingSupported(This)    CALL_IFACE_METHOD(SwapChain, IsDisplayTimingSupported, This)
+#    define ISwapChain_IsPresentBlocked(This, ...)       CALL_IFACE_METHOD(SwapChain, IsPresentBlocked,        This, __VA_ARGS__)
 
 // clang-format on
 
