@@ -174,9 +174,8 @@ DILIGENT_BEGIN_INTERFACE(ISwapChain, IObject)
     /// Returns true if this swap chain currently reports display events.
     VIRTUAL Bool METHOD(IsDisplayTimingSupported)(THIS) CONST PURE;
 
-    /// Returns true if the next Present() would wait for the compositor to show an earlier image
-    /// (no free image left) and that image is not shown within TimeoutNs. Lets an application skip
-    /// presenting to a window the compositor has stopped showing. False if it cannot tell (no display timing).
+    /// True if the next Present() would wait on an image the compositor has not shown within TimeoutNs,
+    /// e.g. for a window it stopped showing. False if it cannot tell (no display timing).
     VIRTUAL Bool METHOD(IsPresentBlocked)(THIS_
                                           Uint64 TimeoutNs) PURE;
 };

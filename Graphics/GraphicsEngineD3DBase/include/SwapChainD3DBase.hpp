@@ -289,7 +289,6 @@ protected:
         // A new DXGI swap chain counts its presents from zero.
         m_FrameStats = {};
 
-        // One line to check at a glance whether sync-interval-0 presents can tear (= be uncapped).
         LOG_INFO_MESSAGE("DXGI swap chain: ", swapChainDesc.BufferCount, " buffers, FLIP_SEQUENTIAL, ",
                          m_FSDesc.Fullscreen ? "exclusive fullscreen" : "windowed/borderless",
                          ", ALLOW_TEARING ", m_TearingSupported ? "supported" : "NOT supported",
@@ -396,7 +395,6 @@ protected:
 
         if (SyncInterval != m_LoggedSyncInterval)
         {
-            // Logged on every vsync toggle so a capped vsync-off run can be told apart from a missing tearing flag.
             m_LoggedSyncInterval = SyncInterval;
             LOG_INFO_MESSAGE("DXGI Present: SyncInterval ", SyncInterval, (Flags & DXGI_PRESENT_ALLOW_TEARING) ? ", ALLOW_TEARING" : ", no tearing flag",
                              SyncInterval != 0     ? " (vsync)" :

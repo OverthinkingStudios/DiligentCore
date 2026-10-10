@@ -345,11 +345,8 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
         }
         else
         {
-            // EWFX: IMMEDIATE first. vsync off has to mean uncapped presentation (D3D12-vs-Vulkan profiling):
-            // IMMEDIATE is the Vulkan twin of DXGI Present(0, ALLOW_TEARING). MAILBOX only uncaps rendering;
-            // the screen still gets one image per refresh, and a driver that holds the replaced images until
-            // the next vblank (e.g. MAILBOX layered on a DXGI flip chain) throttles rendering to the refresh
-            // too. MAILBOX stays as the fallback: GNOME Wayland offers no IMMEDIATE.
+            // IMMEDIATE first, like DXGI ALLOW_TEARING: MAILBOX still shows one image per refresh, and some drivers
+            // throttle rendering to it too. MAILBOX stays as the fallback: GNOME Wayland offers no IMMEDIATE.
             PreferredPresentModes.push_back(VK_PRESENT_MODE_IMMEDIATE_KHR);
             PreferredPresentModes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
             PreferredPresentModes.push_back(VK_PRESENT_MODE_FIFO_KHR);
@@ -380,7 +377,6 @@ void SwapChainVkImpl::CreateVulkanSwapChain()
             }
 #undef PRESENT_MODE_CASE
         };
-        // EWFX: the vsync state and what the surface offers, so a capped vsync-off run is diagnosable from the log.
         std::string OfferedModes;
         for (VkPresentModeKHR Mode : presentModes)
         {
